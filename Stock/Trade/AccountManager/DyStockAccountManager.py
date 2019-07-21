@@ -15,6 +15,7 @@ class DyStockAccountManager:
         实盘股票账户管理，主要对接券商接口。
         根据情况，从券商接口同步可用资金和持仓信息
         从风控和简化处理角度，禁止不同策略同一时间同一只股票相同委托类型的委托。成交的委托不在考虑之内。
+        由参数@buySellMatchedByBrokerEntrustId控制是否禁止。
 
         !!!由于持仓，委托对象可能会被多线程读写，所以事件引擎里传递的此类对象一定要copy。
         成交对象由于生成后不会改变，则无需copy。
@@ -34,6 +35,11 @@ class DyStockAccountManager:
     brokerName = None
 
     riskGuardNbr = 5 # 暂时没有启用此功能
+
+    # 策略的买入卖出交易根据券商的委托号匹配。必须要符合下面的条件此参数才可以设成True：
+    #   券商的买入卖出接口支持直接返回委托号
+    #   券商的成交单含有对应的委托号
+    buySellMatchedByBrokerEntrustId = False
 
 
     def __init__(self, eventEngine, info):
@@ -228,20 +234,34 @@ class DyStockAccountManager:
         # save to disk
         self._save()
 
+    def _canNewEntrust(self, type, datetime, strategyCls, code, name, price, volume):
+        if self.buySellMatchedByBrokerEntrustId:
+            return True
+
+        # check if there's same code and type of entrust not done for different strategy
+        entrusts = self._curEntrusts.get(code)
+        if entrusts is None:
+            return True
+        
+        for entrust in entrusts:
+            if (not entrust.isDone()) and entrust.type == type and entrust.strategyCls != strategyCls:
+                errStr = '{}: 策略[{}]委托失败({}, {}, {}, 价格={}, 数量={}): 策略[{}]有未完成的委托'.format(
+                    self.__class__.__name__, strategyCls.chName,
+                    code, name, type, price, volume,
+                    entrust.strategyCls.chName
+                )
+                self._info.print(errStr, DyLogData.error)
+                                                                                                            
+                return False
+
+        return True
+
     def _newEntrust(self, type, datetime, strategyCls, code, name, price, volume):
         """
             生成新的委托，并向交易接口发送委托事件
         """
-        # check if there's same code and type of entrust not done for different strategy
-        entrusts = self._curEntrusts.get(code)
-        if entrusts is not None:
-            for entrust in entrusts:
-                if (not entrust.isDone()) and entrust.type == type and entrust.strategyCls != strategyCls:
-                    self._info.print('{}: 策略[{}]委托失败({}, {}, {}, 价格={}, 数量={}): 策略[{}]有未完成的委托'.format(self.__class__.__name__, strategyCls.chName,
-                                                                                                   code, name, type, price, volume,
-                                                                                                   entrust.strategyCls.chName), DyLogData.warning)
-                                                                                                               
-                    return None
+        if not self._canNewEntrust(type, datetime, strategyCls, code, name, price, volume):
+            return None
 
         # create a new entrust
         curEntrustCount = self.newCurEntrustCount()
@@ -249,6 +269,13 @@ class DyStockAccountManager:
         entrust = DyStockEntrust(datetime, type, code, name, price, volume)
         entrust.dyEntrustId = '{0}.{1}_{2}'.format(self.broker, self._curTDay, curEntrustCount)
         entrust.strategyCls = strategyCls
+
+        # check price correct or not
+        # 实盘发现股票的委托价超过小数点两位
+        if entrust.code in DyStockCommon.funds:
+            entrust.price = round(entrust.price, 3)
+        else:
+            entrust.price = round(entrust.price, 2)
 
         # add into 当日委托
         self._curEntrusts.setdefault(code, [])
@@ -470,6 +497,11 @@ class DyStockAccountManager:
 
     @curWorkingCancelEntrustsWrapper
     def _stockEntrustUpdateHandler(self, event):
+        """
+            update below parameters for one entrust from broker:
+                - status
+                - brokerEntrustId
+        """
         updatedEntrust = event.data
 
         entrusts = self._curEntrusts.get(updatedEntrust.code)
@@ -480,15 +512,21 @@ class DyStockAccountManager:
             if entrust.dyEntrustId != updatedEntrust.dyEntrustId:
                 continue
 
-            if entrust.status == updatedEntrust.status:
-                break
+            isUpdated = False
+            if entrust.status != updatedEntrust.status:
+                entrust.status = updatedEntrust.status
+                isUpdated = True
 
-            entrust.status = updatedEntrust.status
+            if entrust.brokerEntrustId != updatedEntrust.brokerEntrustId:
+                entrust.brokerEntrustId = updatedEntrust.brokerEntrustId
+                isUpdated = True
 
-            event = DyEvent(DyEventType.stockOnEntrust)
-            event.data = [copy.copy(entrust)]
+            if isUpdated: # @isUpdated should be True
+                event = DyEvent(DyEventType.stockOnEntrust)
+                event.data = [copy.copy(entrust)]
 
-            self._eventEngine.put(event)
+                self._eventEngine.put(event)
+
             break
 
     def _stockCapitalUpdateHandler(self, event):
@@ -784,9 +822,21 @@ class DyStockAccountManager:
             if pos is None:
                 continue
 
+            # 检查价格复权因子。正常情况，如果送股，会导致成本价变低。
+            # 但如果做T，可能会导致成本为0或者为负。所以这里采用简单的处理方法。
+            # 所以如果恰巧某只股票今日除权除息，会导致对应的持仓的价格相关数值不太准确。
+            try:
+                priceAdjFactor = pos.cost/cost
+            except:
+                priceAdjFactor = 0
+
+            if priceAdjFactor <= 0:
+                self._info.print("{}: {}({})价格复权因子错误，设成默认值1。pos.cost={}, broker.cost={}".format(self.brokerName, pos.code, pos.name, pos.cost, cost), DyLogData.warning)
+                priceAdjFactor = 1
+
             # set sync data firstly
             self._curPosSyncData[code] = {'volumeAdjFactor': totalVolume/pos.totalVolume,
-                                          'priceAdjFactor': pos.cost/cost,
+                                          'priceAdjFactor': priceAdjFactor,
                                           'cost': cost
                                           }
 

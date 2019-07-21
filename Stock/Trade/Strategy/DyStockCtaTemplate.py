@@ -84,6 +84,9 @@ class DyStockCtaTemplate(object):
         self._state = state
         self._strategyParam = strategyParam
 
+        self._newPrepareInterface = None # 策略是否使用了新的@prepare接口
+        self._newPreparePosInterface = None # 策略是否使用了新的@preparePos接口
+
         # 初始化当日相关数据
         self.__curInit()
 
@@ -278,24 +281,24 @@ class DyStockCtaTemplate(object):
         for code, pos in self._curPos.items():
             positions[code] = pos.getSavedData()
 
-        # add into saved data
-        if positions:
-            self._curSavedData['pos'] = positions
+        # add pos into saved data
+        assert 'pos' not in self._curSavedData # prevent strategy using 'pos' which is reserved by DY system.
+        self._curSavedData['pos'] = positions
 
         self._ctaEngine.saveOnClose(self._curTDay, self.__class__, self._curSavedData)
 
     @classmethod
-    def prepare(cls, date, dataEngine, info, codes=None, errorDataEngine=None, strategyParam=None, isBackTesting=False):
+    def prepare(cls, date, dataEngine, info, codes=None, errorDataEngine=None, backTestingContext=None):
         """
             类方法，策略开盘前的准备数据（由用户选择继承实现）
             @date: 前一交易日。由当日交易调用，@date为当日的前一交易日。
-            @strategyParam: 策略参数，回测时有效
+            @backTestingContext: 回测时有效
             @return: None-prepare错误, {}-策略没有准备数据
         """
         return {}
 
     @classmethod
-    def preparePos(cls, date, dataEngine, info, posCodes=None, errorDataEngine=None, strategyParam=None, isBackTesting=False):
+    def preparePos(cls, date, dataEngine, info, posCodes=None, errorDataEngine=None, backTestingContext=None):
         """
             类方法，策略开盘前的持仓准备数据（由用户选择继承实现）
             @date: 前一交易日。由当日交易调用，@date为当日的前一交易日。
@@ -522,6 +525,60 @@ class DyStockCtaTemplate(object):
 
         self._ctaEngine.putStockMarketStrengthUpdateEvent(self.__class__, time, marketStrengthInfo.copy())
 
+    def _callPrepare(self, date, codes, isBackTesting):
+        """
+            调用策略的@prepare接口
+        """
+        if self._newPrepareInterface is None:
+            try:
+                data = self.prepare(date, self._ctaEngine.dataEngine, self._info, codes, self._ctaEngine.errorDataEngine, self._strategyParam, isBackTesting)
+                
+                self._newPrepareInterface = False
+
+                warningStr = "DevilYuan-Warning: 策略[{}]请使用@prepare新接口: def prepare(cls, date, dataEngine, info, codes=None, errorDataEngine=None, backTestingContext=None)".format(self.chName)
+                print(warningStr)
+            except TypeError:
+                # new @parepare interface
+                data = self.prepare(date, self._ctaEngine.dataEngine, self._info, codes, self._ctaEngine.errorDataEngine, self._ctaEngine.backTestingContext)
+
+                self._newPrepareInterface = True
+
+            return data
+
+        if self._newPrepareInterface:
+            data = self.prepare(date, self._ctaEngine.dataEngine, self._info, codes, self._ctaEngine.errorDataEngine, self._ctaEngine.backTestingContext)
+        else:
+            data = self.prepare(date, self._ctaEngine.dataEngine, self._info, codes, self._ctaEngine.errorDataEngine, self._strategyParam, isBackTesting)
+
+        return data
+
+    def _callPreparePos(self, date, posCodes, isBackTesting):
+        """
+            调用策略的@preparePos接口
+        """
+        if self._newPreparePosInterface is None:
+            try:
+                data = self.preparePos(date, self._ctaEngine.dataEngine, self._info, posCodes, self._ctaEngine.errorDataEngine, self._strategyParam, isBackTesting)
+                
+                self._newPreparePosInterface = False
+
+                warningStr = "DevilYuan-Warning: 策略[{}]请使用@preparePos新接口: def preparePos(cls, date, dataEngine, info, posCodes=None, errorDataEngine=None, backTestingContext=None)".format(self.chName)
+                print(warningStr)
+            except TypeError:
+                # new @pareparePos interface
+                data = self.preparePos(date, self._ctaEngine.dataEngine, self._info, posCodes, self._ctaEngine.errorDataEngine, self._ctaEngine.backTestingContext)
+
+                self._newPreparePosInterface = True
+
+            return data
+
+        if self._newPreparePosInterface:
+            data = self.preparePos(date, self._ctaEngine.dataEngine, self._info, posCodes, self._ctaEngine.errorDataEngine, self._ctaEngine.backTestingContext)
+        else:
+            data = self.preparePos(date, self._ctaEngine.dataEngine, self._info, posCodes, self._ctaEngine.errorDataEngine, self._strategyParam, isBackTesting)
+
+        return data
+
     def loadPreparedData(self, date, codes=None):
         """
             策略开盘前载入所需的准备数据和策略实例属性。在策略的@onOpen实现里被调用。
@@ -547,10 +604,11 @@ class DyStockCtaTemplate(object):
                 return None
 
             # prepare
-            data = self.prepare(date, self._ctaEngine.dataEngine, self._info, codes, self._ctaEngine.errorDataEngine, self._strategyParam, isBackTesting)
+            data = self._callPrepare(date, codes, isBackTesting)
             if data is None:
                 self._info.print('策略准备数据失败', DyLogData.error)
                 return None
+                
             try:
                 data = json.loads(json.dumps(data)) # Sometime there're non-python objects in @data, use this tricky way to convert to python objects.
             except:
@@ -586,7 +644,7 @@ class DyStockCtaTemplate(object):
             date = self._ctaEngine.tDaysOffsetInDb(DyTime.getDateStr(date, -1))
 
             # prepare
-            data = self.preparePos(date, self._ctaEngine.dataEngine, self._info, posCodes, self._ctaEngine.errorDataEngine, self._strategyParam, isBackTesting)
+            data = self._callPreparePos(date, posCodes, isBackTesting)
             if data is None:
                 self._info.print('策略准备持仓数据失败', DyLogData.error)
                 return None
@@ -877,7 +935,7 @@ class DyStockCtaTemplate(object):
             if pos and pos.sync:
                 priceAdjFactor = preClose/tick.preClose
                 if pos.priceAdjFactor != priceAdjFactor:
-                    self._info.print('策略[{}]: 复权因子-新浪({})与{}({})不一致'.format(self.chName, priceAdjFactor, DyStockTradeCommon.accountMap[self.broker], pos.priceAdjFactor), DyLogData.warning)
+                    self._info.print('策略[{}]: {}({})复权因子不一致: 新浪({}), {}({})'.format(self.chName, tick.code, tick.name, priceAdjFactor, DyStockTradeCommon.accountMap[self.broker], pos.priceAdjFactor), DyLogData.warning)
 
             # call strategy adj function
             func(self, tick, preClose)

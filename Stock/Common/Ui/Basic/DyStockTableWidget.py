@@ -4,13 +4,8 @@ import struct
 import requests
 from bs4 import BeautifulSoup
 import re
+import webbrowser
 
-try:
-    from PyQt5.QtWebKitWidgets import QWebView as DyWebView
-except ImportError:
-    from PyQt5.QtWebEngineWidgets import QWebEngineView as DyWebView
-
-from PyQt5.QtCore import QUrl
 from PyQt5.QtWidgets import QApplication, QFileDialog
 from PyQt5 import QtCore
 
@@ -351,23 +346,11 @@ class DyStockTableWidget(DyStatsTableWidget):
 
     def _stockInfoAct(self):
         code, name = self.getRightClickCodeName()
-        if code is None: return
+        if code is None:
+            return
 
-        browser = DyWebView()
         url = 'http://basic.10jqka.com.cn/32/{0}/'.format(code[:-3])
-        browser.load(QUrl(url))
-
-        browser.setWindowTitle(name)
-        
-        rect = QApplication.desktop().availableGeometry()
-        taskBarHeight = QApplication.desktop().height() - rect.height()
-
-        browser.resize(rect.width()//3 * 2, rect.height() - taskBarHeight)
-        browser.move((rect.width() - browser.width())//2, 0)
-
-        browser.show()
-
-        self._windows.append(browser)
+        webbrowser.open_new_tab(url)
 
     def _newIndustryCompareWindow(self, code, name, baseDate, dfs):
         window = DyStockIndustryCompareWindow(self._eventEngine, DyStockTableWidget, code, name, baseDate)
@@ -901,7 +884,7 @@ class DyStockTableWidget(DyStatsTableWidget):
         defaultFileName = defaultFileName.format(self.getUniqueName())
 
         defaultDir = DyCommon.createPath('Stock/User/Save/Strategy/同花顺')
-        fileName, _ = QFileDialog.getSaveFileName(self, '导出到同花顺', os.path.join(defaultDir, defaultFileName), "同花顺files (*.sel);;all files(*.*)")
+        fileName, _ = QFileDialog.getSaveFileName(None, '导出到同花顺', os.path.join(defaultDir, defaultFileName), "同花顺files (*.sel);;all files(*.*)", options=QFileDialog.DontUseNativeDialog)
         if fileName:
             self.export2Jqka(fileName)
 
@@ -914,7 +897,7 @@ class DyStockTableWidget(DyStatsTableWidget):
         defaultFileName = defaultFileName.format(self.getUniqueName())
 
         defaultDir = DyCommon.createPath('Stock/User/Save/Strategy')
-        fileName, _ = QFileDialog.getSaveFileName(self, '保存股票表', os.path.join(defaultDir, defaultFileName), "JSON files (*.json);;all files(*.*)")
+        fileName, _ = QFileDialog.getSaveFileName(None, '保存股票表', os.path.join(defaultDir, defaultFileName), "JSON files (*.json);;all files(*.*)", options=QFileDialog.DontUseNativeDialog)
         if fileName:
             self._saveAs(fileName, data['all'])
 
@@ -1324,6 +1307,9 @@ class DyStockTableWidget(DyStatsTableWidget):
         """
             子类改写
         """
+        if headerItem is None:
+            return
+            
         self._upDownRatioAction.setEnabled('涨幅' in headerItem.text())
         self._limitUpRatioAction.setEnabled('涨幅' in headerItem.text())
 

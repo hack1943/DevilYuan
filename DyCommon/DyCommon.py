@@ -182,6 +182,31 @@ class DySubInfo:
         self._enabled = enable
 
 
+class DyErrorSubInfo:
+    def __init__(self, subInfo):
+        self._paramGroupNo = subInfo._paramGroupNo
+        self._period = subInfo._period
+        self._outQueue = subInfo._outQueue
+
+    def print(self, description, type=DyLogData.info):
+        if type != DyLogData.error and type != DyLogData.warning:
+            return
+
+        event = DyEvent(DyEventType.subLog_ + '_' + str(self._paramGroupNo) + str(self._period))
+        event.data = DyLogData(description, type)
+
+        self._outQueue.put(event)
+
+    def progressSingle(self, percent):
+        pass
+
+    def progressTotal(self, percent):
+        pass
+
+    def initProgress(self):
+        pass
+
+
 class DyTime:
 
     def getTimeInterval(time1, time2):
@@ -383,8 +408,9 @@ class DyMatplotlib:
 
 class DyProgress(object):
 
-    def __init__(self, info):
+    def __init__(self, info, printConsole=False):
         self._info = info
+        self._printConsole = printConsole
 
         # Ui progress related
         self._totalReqNbr = 0
@@ -427,6 +453,7 @@ class DyProgress(object):
 
         # notify Ui progress
         if percent%self._singleUpdateUiStep == 0 or percent == 100:
+            self._printConsoleProgressSingle(percent)
             self._info.progressSingle(percent)
 
         # new start for single progress
@@ -447,6 +474,7 @@ class DyProgress(object):
 
         # notify Ui progress
         if percent%self._totalUpdateUiStep == 0  or percent == 100:
+            self._printConsoleProgressTotal(percent)
             self._info.progressTotal(percent)
 
     def update(self):
@@ -462,6 +490,28 @@ class DyProgress(object):
     @property
     def totalReqCount(self):
         return self._totalReqCount
+
+    def _printConsoleProgressSingle(self, percent):
+        if not self._printConsole:
+            return
+
+        # not a good way to directly access members of @info
+        try:
+            if self._info._progressSingle != percent:
+                print("Total: {}%, Single: {}%".format(self._info._progressTotal, percent))
+        except:
+            pass
+
+    def _printConsoleProgressTotal(self, percent):
+        if not self._printConsole:
+            return
+
+        # not a good way to directly access members of @info
+        try:
+            if self._info._progressTotal != percent:
+                print("Total: {}%, Single: {}%".format(percent, self._info._progressSingle))
+        except:
+            pass
 
 
 class DyCommon:

@@ -1,11 +1,13 @@
 import os
 import json
+import copy
 
 from DyCommon.DyCommon import DyCommon
 from Stock.Common.DyStockCommon import DyStockCommon
 from ..Data.Engine.DyStockMongoDbEngine import DyStockMongoDbEngine
 from ..Trade.WeChat.DyStockTradeWxEngine import DyStockTradeWxEngine
 from ..Trade.Broker.YhNew.YhTrader import YhTrader
+from ..Trade.Broker.Ths.ThsTrader import ThsTrader
 from ..Data.Gateway.DyStockDataGateway import DyStockDataGateway
 
 
@@ -40,7 +42,8 @@ class DyStockConfig(object):
 
     defaultTradeDaysMode = {"tradeDaysMode": "Verify"}
 
-    defaultTuShareDaysInterval = {"interval": 5}
+    defaultTuShareDaysInterval = {"interval": 0}
+    defaultTuShareProDaysInterval = {"interval": 0}
 
 
     def getDefaultHistDaysDataSource():
@@ -74,6 +77,36 @@ class DyStockConfig(object):
         file = os.path.join(path, 'DyStockHistDaysDataSource.json')
 
         return file
+
+    def _configStockHistDaysTuSharePro():
+        file = DyStockConfig.getStockHistDaysTuShareProFileName()
+
+        # open
+        try:
+            with open(file) as f:
+                data = json.load(f)
+        except:
+            data = DyStockConfig.getDefaultHistDaysTuSharePro()
+
+        DyStockConfig.configStockHistDaysTuSharePro(data)
+
+    def configStockHistDaysTuSharePro(data):
+        DyStockCommon.useTuSharePro = False
+        DyStockCommon.tuShareProToken = None
+
+        if data.get('TuSharePro'):
+            DyStockCommon.useTuSharePro = True
+
+        DyStockCommon.tuShareProToken = data.get('Token')
+
+    def getStockHistDaysTuShareProFileName():
+        path = DyCommon.createPath('Stock/User/Config/Common')
+        file = os.path.join(path, 'DyStockHistDaysTuSharePro.json')
+
+        return file
+
+    def getDefaultHistDaysTuSharePro():
+        return {'TuSharePro': False, 'ShowToken': False}
 
     def _configStockMongoDb():
         file = DyStockConfig.getStockMongoDbFileName()
@@ -152,6 +185,8 @@ class DyStockConfig(object):
         YhTrader.password = data["Yh"]["Password"]
         YhTrader.exePath = data["Yh"]["Exe"]
 
+        ThsTrader.exePath = data["Ths"]["Exe"]
+
     def getStockAccountFileName():
         path = DyCommon.createPath('Stock/User/Config/Trade')
         file = os.path.join(path, 'DyStockAccount.json')
@@ -200,10 +235,82 @@ class DyStockConfig(object):
 
         return file
 
+    def _configStockTuShareProDaysInterval():
+        file = DyStockConfig.getStockTuShareProDaysIntervalFileName()
+
+        # open
+        try:
+            with open(file) as f:
+                data = json.load(f)
+        except:
+            data = DyStockConfig.defaultTuShareProDaysInterval
+
+        DyStockConfig.configStockTuShareProDaysInterval(data)
+
+    def configStockTuShareProDaysInterval(data):
+        DyStockDataGateway.tuShareProDaysSleepTimeConst = data["interval"]
+
+    def getStockTuShareProDaysIntervalFileName():
+        path = DyCommon.createPath('Stock/User/Config/Common')
+        file = os.path.join(path, 'DyStockTuShareProDaysInterval.json')
+
+        return file
+
     def config():
-        DyStockConfig._configStockHistDaysDataSource()
+        DyStockConfig._configStockHistDaysDataSource() # first
+        DyStockConfig._configStockHistDaysTuSharePro()
         DyStockConfig._configStockTradeDaysMode()
         DyStockConfig._configStockTuShareDaysInterval()
+        DyStockConfig._configStockTuShareProDaysInterval()
         DyStockConfig._configStockMongoDb()
         DyStockConfig._configStockWxScKey()
         DyStockConfig._configStockAccount()
+
+    def _getStockMongoDbForBackTesting():
+        data = copy.deepcopy(DyStockConfig.defaultMongoDb)
+
+        # connection
+        data['Connection']['Host'] = DyStockMongoDbEngine.host
+        data['Connection']['Port'] = DyStockMongoDbEngine.port
+
+        # Wind
+        data["CommonDays"]["Wind"]['stockCommonDb'] = DyStockMongoDbEngine.stockCommonDb
+        data["CommonDays"]["Wind"]['tradeDayTableName'] = DyStockMongoDbEngine.tradeDayTableName
+        data["CommonDays"]["Wind"]['codeTableName'] = DyStockMongoDbEngine.codeTableName
+
+        data["CommonDays"]["Wind"]['stockDaysDb'] = DyStockMongoDbEngine.stockDaysDb
+
+        # TuShare
+        data["CommonDays"]["TuShare"]['stockCommonDb'] = DyStockMongoDbEngine.stockCommonDbTuShare
+        data["CommonDays"]["TuShare"]['tradeDayTableName'] = DyStockMongoDbEngine.tradeDayTableNameTuShare
+        data["CommonDays"]["TuShare"]['codeTableName'] = DyStockMongoDbEngine.codeTableNameTuShare
+
+        data["CommonDays"]["TuShare"]['stockDaysDb'] = DyStockMongoDbEngine.stockDaysDbTuShare
+
+        # ticks
+        data["Ticks"]["db"] = DyStockMongoDbEngine.stockTicksDb
+
+        return data
+
+    def getConfigForBackTesting():
+        """
+            多进程回测需要当前进程的配置参数
+        """
+        data = {}
+        data['exePath'] = DyCommon.exePath
+        data['defaultHistDaysDataSource'] = DyStockCommon.defaultHistDaysDataSource
+        data['tuSharePro'] = {'useTuSharePro': DyStockCommon.useTuSharePro,
+                            'tuShareProToken': DyStockCommon.tuShareProToken,
+                            }
+        data['mongoDb'] = DyStockConfig._getStockMongoDbForBackTesting()
+
+        return data
+
+    def setConfigForBackTesting(data):
+        DyCommon.exePath = data['exePath']
+        DyStockCommon.defaultHistDaysDataSource = data['defaultHistDaysDataSource']
+        DyStockCommon.useTuSharePro = data['tuSharePro']['useTuSharePro']
+        DyStockCommon.tuShareProToken = data['tuSharePro']['tuShareProToken']
+
+        DyStockConfig.configStockMongoDb(data['mongoDb'])
+        

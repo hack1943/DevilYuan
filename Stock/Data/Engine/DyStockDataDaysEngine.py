@@ -90,10 +90,11 @@ class DyStockDataDaysEngine(object):
                 return None
         else:
             newCodes = {}
-            for code in codes:
-                newCodes[code] = {}
-                for indicator in indicators:
-                    newCodes[code][indicator] = tradeDays
+            if tradeDays and indicators:
+                for code in codes:
+                    newCodes[code] = {}
+                    for indicator in indicators:
+                        newCodes[code][indicator] = tradeDays
 
             codes = newCodes
             if not codes:
@@ -230,6 +231,8 @@ class DyStockDataDaysEngine(object):
         # get from Gateway
         data = self._gateway.getDays(code, startDate, endDate, sorted(data), self.stockAllCodesFunds[code])
         if not data: # None(errors) or no data
+            if data is None: # indicate fetching data error from engine point of view
+                self._info.print("￥DyStockDataDaysEngine￥: 获取{}({})日线数据[{}, {}]失败".format(code, self.stockAllCodesFunds[code], startDate, endDate), DyLogData.error)
             return
 
         # updat to DB
@@ -410,6 +413,10 @@ class DyStockDataDaysEngine(object):
             根据股票名称获取股票代码
         """
         return self._commonEngine.getCode(name)
+
+    @property
+    def eventEngine(self):
+        return self._eventEngine
 
     @property
     def shIndex(self):

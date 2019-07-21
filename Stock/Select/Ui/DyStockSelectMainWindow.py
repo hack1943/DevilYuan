@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QDockWidget
+from PyQt5.QtWidgets import QDockWidget, QMessageBox
 from PyQt5.QtGui import QFont
 
 from DyCommon.Ui.DyLogWidget import *
@@ -23,6 +23,8 @@ from ...Common.DyStockCommon import *
 from EventEngine.DyEvent import *
 from ..Engine.DyStockSelectMainEngine import *
 from ..Engine.Regression.DyStockSelectRegressionEngine import *
+
+from Stock.Select.Ui.Basic import DyStockSelectStrategyClsMap
 
 
 class DyStockSelectMainWindow(DyBasicMainWindow):
@@ -158,7 +160,7 @@ class DyStockSelectMainWindow(DyBasicMainWindow):
 
     def _openStrategySelectResultAct(self):
         defaultDir = DyCommon.createPath('Stock/User/Save/Strategy/选股')
-        fileName, _ = QFileDialog.getOpenFileName(self, "打开策略选股/回归结果", defaultDir, "JSON files (*.json)")
+        fileName, _ = QFileDialog.getOpenFileName(None, "打开策略选股/回归结果", defaultDir, "JSON files (*.json)", options=QFileDialog.DontUseNativeDialog)
 
         # open
         try:
@@ -175,7 +177,10 @@ class DyStockSelectMainWindow(DyBasicMainWindow):
         if not strategyClsName:
             return
 
-        strategyCls = eval(strategyClsName)
+        strategyCls = DyStockSelectStrategyClsMap.get(strategyClsName)
+        if strategyCls is None:
+            QMessageBox.warning(self, '错误', '没有找到选股策略: {}'.format(strategyClsName))
+            return
 
         # load
         if self._widgetSelectResult.load(data, strategyCls):

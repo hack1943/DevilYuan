@@ -42,6 +42,8 @@ class DyStockBackTestingStrategyPeriodResultWidget(QWidget):
         grid.addWidget(self._dealsWidget, 5, 0)
         grid.addWidget(self._subInfoWidget, 6, 0)
         
+        # 由于显示屏的差异，可能会导致账户信息没法显示完整。所以开源版本，不做设置。
+        """
         grid.setRowStretch(0, 1)
         grid.setRowStretch(1, 4)
         grid.setRowStretch(2, 1)
@@ -49,6 +51,7 @@ class DyStockBackTestingStrategyPeriodResultWidget(QWidget):
         grid.setRowStretch(4, 1)
         grid.setRowStretch(5, 30)
         grid.setRowStretch(6, 1)
+        """
 
         self.setLayout(grid)
 
@@ -86,3 +89,23 @@ class DyStockBackTestingStrategyPeriodResultWidget(QWidget):
 
     def overview(self):
         return self._statsWidget.overview()
+
+    @property
+    def statsWidget(self):
+        return self._statsWidget
+
+    @property
+    def posWidget(self):
+        return self._posWidget
+
+    @property
+    def dealsWidget(self):
+        return self._dealsWidget
+
+    def combineInit(self, statsWidgets, posWidgets, dealsWidgets):
+        """
+            use self widgets to initialize itself
+        """
+        self._statsWidget.combineInit(statsWidgets)
+        self._posWidget.combineInit(posWidgets)
+        self._dealsWidget.combineInit(dealsWidgets)

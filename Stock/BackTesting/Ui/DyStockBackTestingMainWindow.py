@@ -12,6 +12,7 @@ from ..Engine.DyStockBackTestingMainEngine import *
 from ...Select.Ui.Other.DyStockSelectTestedStocksDlg import *
 from ...Common.Ui.DyStockMaViewerIndicatorMenu import *
 from .Other.DyStockBackTestingSettingDlg import *
+from Stock.Trade.Ui.Basic import DyStockTradeStrategyClsMap
 
 
 class DyStockBackTestingMainWindow(DyBasicMainWindow):
@@ -162,7 +163,7 @@ class DyStockBackTestingMainWindow(DyBasicMainWindow):
 
     def _openBackTestingStrategyResultDealsAct(self):
         defaultDir = DyCommon.createPath('Stock/User/Save/Strategy/股票策略回测')
-        fileName, _ = QFileDialog.getOpenFileName(self, "打开策略回测成交结果...", defaultDir, "JSON files (*.json)")
+        fileName, _ = QFileDialog.getOpenFileName(None, "打开策略回测成交结果...", defaultDir, "JSON files (*.json)", options=QFileDialog.DontUseNativeDialog)
 
         # open
         try:
@@ -179,7 +180,10 @@ class DyStockBackTestingMainWindow(DyBasicMainWindow):
         if not strategyClsName:
             return
 
-        strategyCls = eval(strategyClsName)
+        strategyCls = DyStockTradeStrategyClsMap.get(strategyClsName)
+        if strategyCls is None:
+            QMessageBox.warning(self, '错误', '没有找到实盘策略: {}'.format(strategyClsName))
+            return
 
         # load
         self._widgetResult.loadDeals(data, strategyCls)

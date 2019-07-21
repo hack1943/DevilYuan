@@ -4,6 +4,7 @@ from time import sleep
 
 from DyCommon.DyCommon import *
 from ...Common.DyStockCommon import *
+from Stock.Data.Engine.DyStockDbCache import DyGetStockDbCache
 
 
 class DyStockMongoDbEngine(object):
@@ -34,10 +35,15 @@ class DyStockMongoDbEngine(object):
                        }
 
     
-    def __init__(self, info):
+    def __init__(self, info, cache=False):
         self._info = info
 
         self._client = pymongo.MongoClient(self.host, self.port)
+
+        # DB cache
+        self._dbCache = None
+        if cache:
+            self._dbCache = DyGetStockDbCache(self._info, self)
 
     def _getTradeDayTableCollection(self):
         if 'Wind' in DyStockCommon.defaultHistDaysDataSource:
@@ -358,10 +364,7 @@ class DyStockMongoDbEngine(object):
         collection = self._getStockDaysDb()[code]
 
         # create index
-        try:
-            collection.index_information()
-        except Exception as ex: # collection or database not existing
-            collection.create_index([('datetime', pymongo.ASCENDING)], unique=True)
+        collection.create_index([('datetime', pymongo.ASCENDING)], unique=True)
 
         # update to DB
         try:
@@ -378,19 +381,18 @@ class DyStockMongoDbEngine(object):
         collection = self._getTradeDayTableCollection()
 
         # create index
-        try:
-            collection.index_information()
-        except Exception as ex: # collection or database not existing
-            collection.create_index([('datetime', pymongo.ASCENDING)], unique=True)
+        collection.create_index([('datetime', pymongo.ASCENDING)], unique=True)
 
         # update into DB
         try:
             for date in dates:
                 flt = {'datetime': date['datetime']}
-                collection.update_one(flt, {'$set':{'tradeDay': date['tradeDay']}}, upsert=True)
-
+                result = collection.update_one(flt, {'$set':{'tradeDay': date['tradeDay']}}, upsert=True)
+                if not (result.acknowledged and (result.matched_count == 1 or result.upserted_id is not None)):
+                    self._info.print("更新交易日数据到MongoDB失败: date={}, raw_result={}".format(date, result.raw_result), DyLogData.error)
+                    return False
         except Exception as ex:
-            self._info.print("更新交易日数据到MongoDB异常:{0}".format(str(ex) + ', ' + str(ex.details)), DyLogData.error)
+            self._info.print("更新交易日数据到MongoDB异常: {}".format(str(ex) + ', ' + str(ex.details)), DyLogData.error)
             return False
 
         return True
@@ -399,10 +401,7 @@ class DyStockMongoDbEngine(object):
         collection = self._getCodeTableCollection()
 
         # create index
-        try:
-            collection.index_information()
-        except Exception as ex: # collection or database not existing
-            collection.create_index([('code', pymongo.ASCENDING)], unique=True)
+        collection.create_index([('code', pymongo.ASCENDING)], unique=True)
 
         # update into DB
         try:
@@ -416,9 +415,23 @@ class DyStockMongoDbEngine(object):
 
         return True
 
-    def getOneCodeDays(self, code, startDate, endDate, indicators, name=None):
+    def getOneCodeDaysWrapper(func):
+        """
+            @getOneCodeDays的装饰器
+        """
+        def wrapper(self, *args, **kwargs):
+            if self._dbCache is None or kwargs.get('raw'):
+                return func(self, *args, **kwargs)
+
+            return self._dbCache.getOneCodeDays(*args, **kwargs)
+
+        return wrapper
+
+    @getOneCodeDaysWrapper
+    def getOneCodeDays(self, code, startDate, endDate, indicators, name=None, raw=False):
         """
             通过绝对日期获取个股日线数据
+            @raw: True - not via cache, for called by DB cache
         """
         cursor = self._findOneCodeDays(code, startDate, endDate, name)
         if cursor is None: return None
@@ -442,6 +455,19 @@ class DyStockMongoDbEngine(object):
 
         return codesDf if codesDf else None
 
+    def getAdjFactorWrapper(func):
+        """
+            @getAdjFactor的装饰器
+        """
+        def wrapper(self, *args, **kwargs):
+            if self._dbCache is None:
+                return func(self, *args, **kwargs)
+
+            return self._dbCache.getAdjFactor(*args, **kwargs)
+
+        return wrapper
+
+    @getAdjFactorWrapper
     def getAdjFactor(self, code, date, name=None):
         collection = self._getStockDaysDb()[code]
 
@@ -504,6 +530,19 @@ class DyStockMongoDbEngine(object):
 
         return None
 
+    def getOneCodeDaysUnifiedWrapper(func):
+        """
+            @getOneCodeDaysUnified的装饰器
+        """
+        def wrapper(self, *args, **kwargs):
+            if self._dbCache is None:
+                return func(self, *args, **kwargs)
+
+            return self._dbCache.getOneCodeDaysUnified(*args, **kwargs)
+
+        return wrapper
+
+    @getOneCodeDaysUnifiedWrapper
     def getOneCodeDaysUnified(self, code, dates, indicators, name=None):
         """
             获取个股日线数据的统一接口
@@ -518,6 +557,19 @@ class DyStockMongoDbEngine(object):
 
         return df
 
+    def codeTDayOffsetWrapper(func):
+        """
+            @codeTDayOffset的装饰器
+        """
+        def wrapper(self, *args, **kwargs):
+            if self._dbCache is None:
+                return func(self, *args, **kwargs)
+
+            return self._dbCache.codeTDayOffset(*args, **kwargs)
+
+        return wrapper
+
+    @codeTDayOffsetWrapper
     def codeTDayOffset(self, code, baseDate, n=0, strict=True):
         """
             获取基于个股偏移的交易日
@@ -555,10 +607,7 @@ class DyStockMongoDbEngine(object):
         collection = self._client[self.stockTicksDb][code]
 
         # create index
-        try:
-            collection.index_information()
-        except Exception as ex: # collection or database not existing
-            collection.create_index([('datetime', pymongo.ASCENDING)], unique=True)
+        collection.create_index([('datetime', pymongo.ASCENDING)], unique=True)
 
         # insert ticks into DB
         try:
@@ -761,10 +810,7 @@ class DyStockMongoDbEngine(object):
         collection = self._client[self.sectorCodeDbMap[sectorCode]][date]
 
         # create index
-        try:
-            collection.index_information()
-        except Exception as ex: # collection or database not existing
-            collection.create_index([('code', pymongo.ASCENDING)], unique=True)
+        collection.create_index([('code', pymongo.ASCENDING)], unique=True)
 
         # update into DB
         try:
@@ -777,3 +823,20 @@ class DyStockMongoDbEngine(object):
             return False
 
         return True
+
+    def codeAllTradeDays(self, code, name=None):
+        """
+            get all trade days for stock code
+            @return: [trade day], which is sorted
+        """
+        collection = self._getStockDaysDb()[code]
+
+        try:
+            datetimeList = collection.distinct('datetime')
+        except Exception as ex:
+            exStr = str(ex) + ', ' + str(ex.details)
+            codeInfo = '{}({})'.format(code, name) if name is not None else code
+            self._info.print("MongoDB Exception({}): @codeAllTradeDays, {}".format(exStr, codeInfo), DyLogData.error)
+            return None
+
+        return sorted([x.strftime('%Y-%m-%d') for x in datetimeList])

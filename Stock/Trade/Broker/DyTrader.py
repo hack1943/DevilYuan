@@ -18,6 +18,9 @@ class DyTrader(object):
     pollingCurEntrustTimer = 1
     maxRetryNbr = 3 # 最大重试次数
 
+    curEntrustHeaderNoIndex = None
+    curEntrustHeaderStateIndex = None
+
 
     def __init__(self, eventEngine, info, configFile=None, accountConfigFile=None):
         self._eventEngine = eventEngine
@@ -156,6 +159,23 @@ class DyTrader(object):
 
         return recognizedCode
 
+    def _checkNewEntrusts(self, newEntrusts):
+        """
+            Prevent we get wrong data from broker
+        """
+        # We think no need to check entrusts format, which will be handled by subclass.
+        if self.curEntrustHeaderNoIndex is None:
+            return True
+
+        maxIndex = max(self.curEntrustHeaderNoIndex, self.curEntrustHeaderStateIndex)
+
+        for newEntrust in newEntrusts:
+            if maxIndex >= len(newEntrust):
+                self._info.print('{}: 当日委托数据错误: {}'.format(self.brokerName, newEntrust), DyLogData.warning)
+                return False
+        
+        return True
+
     def _pollCurEntrusts(self, event):
         """
             定时轮询当日委托直到所有委托都是完成状态
@@ -163,6 +183,9 @@ class DyTrader(object):
         # 从券商GET当日委托
         header, newEntrusts = self.getCurEntrusts()
         if header is None:
+            return
+
+        if not self._checkNewEntrusts(newEntrusts):
             return
         
         # compare state for each entrust
@@ -207,10 +230,23 @@ class DyTrader(object):
 
         self._eventEngine.unregister(DyEventType.stockMarketTicks, self._stockMarketTicksHandler, DyStockTradeEventHandType.brokerEngine)
 
+    def _updateEntrustWithBrokerEntrustId(self, entrust, brokerEntrustId):
+        entrust = copy.copy(entrust)
+        entrust.brokerEntrustId = brokerEntrustId
+
+        event = DyEvent(DyEventType.stockEntrustUpdate + self.broker)
+        event.data = entrust
+
+        self._eventEngine.put(event)
+
     def _stockBuyHandler(self, event):
         entrust = event.data
 
-        if self.buy(entrust.code, entrust.name, entrust.price, entrust.totalVolume):
+        ret = self.buy(entrust.code, entrust.name, entrust.price, entrust.totalVolume)
+        if ret: # success
+            if ret is not True: # success with broker entrust ID
+                self._updateEntrustWithBrokerEntrustId(entrust, ret)
+
             self._postfixEntrustAction()
         else:
             self._discardEntrust(entrust)
@@ -220,7 +256,11 @@ class DyTrader(object):
     def _stockSellHandler(self, event):
         entrust = event.data
 
-        if self.sell(entrust.code, entrust.name, entrust.price, entrust.totalVolume):
+        ret = self.sell(entrust.code, entrust.name, entrust.price, entrust.totalVolume)
+        if ret: # success
+            if ret is not True: # success with broker entrust ID
+                self._updateEntrustWithBrokerEntrustId(entrust, ret)
+
             self._postfixEntrustAction()
         else:
             self._discardEntrust(entrust)
@@ -411,7 +451,7 @@ class DyTrader(object):
         szIndexTick = ticks.get(DyStockCommon.szIndex)
         shIndexTick = ticks.get(DyStockCommon.shIndex)
 
-        if szIndexTick is not None and shIndextick is not None:
+        if szIndexTick is not None and shIndexTick is not None:
             self._exchangeDatetime = max(szIndexTick.datetime, shIndexTick.datetime)
         elif szIndexTick is not None:
             self._exchangeDatetime = szIndexTick.datetime
@@ -488,13 +528,6 @@ class DyTrader(object):
 
         return None
 
-    def _setCurEntrustHeaderIndex(self):
-        if self.curEntrustHeaderNoIndex is not None:
-            return
-
-        self.curEntrustHeaderNoIndex = self.curEntrustHeader.index(self.curEntrustHeaderNo)
-        self.curEntrustHeaderStateIndex = self.curEntrustHeader.index(self.curEntrustHeaderState)
-
     def _compareEntrusts(self, entrusts, newEntrusts):
         """
             比较两组委托的状态
@@ -518,9 +551,6 @@ class DyTrader(object):
             stateChange = False
             allDone = True
 
-        # 设置index
-        self._setCurEntrustHeaderIndex()
-
         # compare state for each new entrust
         for newEntrust in newEntrusts:
             newEntrustNo = newEntrust[self.curEntrustHeaderNoIndex]
@@ -535,3 +565,19 @@ class DyTrader(object):
                 allDone = False
 
         return stateChange, allDone
+
+    def buy(self, code, name, price, volume):
+        """
+            @return: True - success without broker entrust ID
+                     False - failed
+                     broker entrust ID - success with broker entrust ID
+        """
+        raise NotImplementedError
+
+    def sell(self, code, name, price, volume):
+        """
+            @return: True - success without broker entrust ID
+                     False - failed
+                     broker entrust ID - success with broker entrust ID
+        """
+        raise NotImplementedError

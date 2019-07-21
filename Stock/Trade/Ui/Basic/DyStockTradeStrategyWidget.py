@@ -11,13 +11,19 @@ class DyStockTradeStrategyWidget(DyTreeWidget):
 
 
     def __init__(self, eventEngine):
-        self._strategies = {} # {strategy chName: strategy class}
+        self._strategies = {} # {strategy chName: [state, strategy class]}
         newFields = self._transform(self.__class__.strategyFields)
         
         super().__init__(newFields)
         self.collapse('Obsolete')
 
         self._eventEngine = eventEngine
+
+        # At last, set tooltip of each strategy to which broker it uses
+        for chName, (_, strategyCls) in self._strategies.items():
+            itemList =  self.findItems(chName, Qt.MatchExactly|Qt.MatchRecursive, 0)
+            assert len(itemList) == 1
+            itemList[0].setToolTip(0, 'broker={}'.format(strategyCls.broker))
 
     def on_itemClicked(self, item, column):
         super(DyStockTradeStrategyWidget, self).on_itemClicked(item, column)
@@ -64,14 +70,17 @@ class DyStockTradeStrategyWidget(DyTreeWidget):
         newFields = []
         for field in fields:
             if isinstance(field, list):
-                newFields.append(self._transform(field))
+                retFields = self._transform(field)
+                if retFields:
+                    newFields.append(retFields)
             else:
                 if hasattr(field,  'chName'):
-                    newFields.append(field.chName)
-                    newFields.append(['运行'])
-                    newFields.append(['监控'])
+                    if field.__name__[-3:] != '_BT': # ignore pure backtesting strategy
+                        newFields.append(field.chName)
+                        newFields.append(['运行'])
+                        newFields.append(['监控'])
 
-                    self._strategies[field.chName] = [DyStockStrategyState(), field]
+                        self._strategies[field.chName] = [DyStockStrategyState(), field]
                 else:
                     newFields.append(field)
 

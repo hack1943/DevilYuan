@@ -3,6 +3,9 @@
 """
 Module implementing DyMainWindow.
 """
+import warnings
+warnings.filterwarnings('ignore')
+
 import os
 import json
 
@@ -171,12 +174,13 @@ class DyMainWindow(QMainWindow, Ui_MainWindow):
         DyStockAccountConfigDlg().exec_()
 
     def _config(self):
-        DyCommon.exePath = os.path.dirname(__file__)
+        DyCommon.exePath = os.path.dirname(os.path.abspath(__file__))
         DyStockConfig.config()
 
 
 if __name__ == "__main__":
-
+    warnings.filterwarnings('ignore')
+    
     """
     import ctypes
     whnd = ctypes.windll.kernel32.GetConsoleWindow()
@@ -184,7 +188,7 @@ if __name__ == "__main__":
         ctypes.windll.user32.ShowWindow(whnd, 0)
         ctypes.windll.kernel32.CloseHandle(whnd)
     """
-
+    
     import ctypes
     import platform
 

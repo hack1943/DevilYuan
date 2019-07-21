@@ -25,7 +25,7 @@ class DyStockBackTestingCtaEngine(object):
     """
 
 
-    def __init__(self, eventEngine, info, dataEngine, reqData):
+    def __init__(self, eventEngine, info, dataEngine, reqData, dbCache=False):
         # unpack
         strategyCls = reqData.strategyCls
         settings = reqData.settings # 回测参数设置
@@ -61,9 +61,12 @@ class DyStockBackTestingCtaEngine(object):
 
         # error DataEngine
         # 有时策略@prepare需要独立载入大量个股数据，避免输出大量log
-        errorInfo = DyErrorInfo(eventEngine)
-        self._errorDataEngine = DyStockDataEngine(eventEngine, errorInfo, registerEvent=False)
+        errorInfo = DyErrorSubInfo(info)
+        self._errorDataEngine = DyStockDataEngine(eventEngine, errorInfo, registerEvent=False, dbCache=dbCache)
         self._errorDaysEngine = self._errorDataEngine.daysEngine
+
+        # create backtesting context
+        self._context = DyStockBackTestingContext(self._strategyPeriod, self._strategyParam)
 
         self._curInit()
 
@@ -92,6 +95,7 @@ class DyStockBackTestingCtaEngine(object):
 
         self._curTicks = {} # 当日监控股票的当日所有ticks, {code: {time: DyStockCtaTickData}}
         self._curLatestTicks = {} # 当日监控股票的当日最新tick, {code: DyStockCtaTickData}
+        self._curTicksBitmap = {} # 当日监控股票是否有ticks的位图, {time: True}
 
         self._curBars = {} # 当日监控股票的当日所有Bars, 日内{code: {time: DyStockCtaBarData}}，日线{code: DyStockCtaBarData}
 
@@ -185,6 +189,8 @@ class DyStockBackTestingCtaEngine(object):
                 # set
                 ticks[tick.time] = tick
 
+                self._curTicksBitmap.setdefault(tick.time, True)
+
             self._curTicks[code] = ticks
 
             count += 1
@@ -206,6 +212,9 @@ class DyStockBackTestingCtaEngine(object):
             获取推送到策略的Ticks
         """
         time = '{0}:{1}:{2}'.format(h if h > 9 else ('0' + str(h)), m if m > 9 else ('0' + str(m)), s if s > 9 else ('0' + str(s)))
+
+        if not self._curTicksBitmap.get(time):
+            return {}
 
         ticks = {}
         for code in self._curTicks:
@@ -393,7 +402,13 @@ class DyStockBackTestingCtaEngine(object):
 
             # 合成分钟Bar, 右闭合
             # 缺失的Bar设为NaN
-            df = df.resample(str(m) + 'min', closed='right', label='right')[['price', 'volume']].agg(OrderedDict([('price', 'ohlc'), ('volume', 'sum')]))
+            dfMorning = df[:'{} 12:00:00'.format(self._curTDay)] # 上午
+            dfMorning = dfMorning.resample(str(m) + 'min', closed='right', label='right', base=30)[['price', 'volume']].agg(OrderedDict([('price', 'ohlc'), ('volume', 'sum')]))
+
+            dfAfternoon = df['{} 13:00:00'.format(self._curTDay):] # 下午
+            dfAfternoon = dfAfternoon.resample(str(m) + 'min', closed='right', label='right')[['price', 'volume']].agg(OrderedDict([('price', 'ohlc'), ('volume', 'sum')]))
+
+            df = pd.concat([dfMorning, dfAfternoon])
             df.dropna(inplace=True) # drop缺失的Bars
 
             data = df.reset_index().values.tolist()
@@ -540,7 +555,10 @@ class DyStockBackTestingCtaEngine(object):
         return True
 
     def run(self, tDay):
-        """ 运行指定交易日回测 """
+        """
+            运行指定交易日回测
+        """
+        self._info.print('开始回测策略[{}], {}...'.format(self._strategy.chName, tDay), DyLogData.ind)
         
         # 检查参数合法性
         if not self._verifyParams(tDay):
@@ -567,21 +585,24 @@ class DyStockBackTestingCtaEngine(object):
             self._info.print('账户管理[{0}]开盘前准备失败'.format(tDay), DyLogData.error)
             return False
 
-        # 设置策略行情过滤器
-        self._strategyMarketFilter.addFilter(self._strategy.onMonitor())
+        if self._strategy.onMonitor() or self._accountManager.onMonitor():
+            # 设置策略行情过滤器
+            self._strategyMarketFilter.addFilter(self._strategy.onMonitor())
 
-        # 得到策略要监控的股票池
-        monitoredCodes = self._strategy.onMonitor() + self._accountManager.onMonitor() + [DyStockCommon.etf300, DyStockCommon.etf500]
-        monitoredCodes = set(monitoredCodes) # 去除重复的股票
-        monitoredCodes -= set(DyStockCommon.indexes.keys()) # 新浪没有指数的Tick数据
-        monitoredCodes = list(monitoredCodes)
+            # 得到策略要监控的股票池
+            monitoredCodes = self._strategy.onMonitor() + self._accountManager.onMonitor() + [DyStockCommon.etf300, DyStockCommon.etf500]
+            monitoredCodes = set(monitoredCodes) # 去除重复的股票
+            monitoredCodes -= set(DyStockCommon.indexes.keys()) # 新浪没有指数的Tick数据
+            monitoredCodes = list(monitoredCodes)
 
-        # 载入监控股票池的回测数据
-        if not self._loadData(monitoredCodes):
-            return False
+            # 载入监控股票池的回测数据
+            if not self._loadData(monitoredCodes):
+                return False
 
-        # 运行回测数据
-        self._runData()
+            # 运行回测数据
+            self._runData()
+        else:
+            self._info.print('策略和账户管理[{}]没有监控的股票'.format(tDay), DyLogData.ind)
 
         # 收盘后的处理
         self._strategy.onClose()
@@ -648,6 +669,10 @@ class DyStockBackTestingCtaEngine(object):
     @property
     def errorDataEngine(self):
         return self._errorDataEngine
+
+    @property
+    def backTestingContext(self):
+        return self._context
 
     def getCurPos(self, strategyCls):
         return self._accountManager.curPos

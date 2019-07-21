@@ -39,6 +39,19 @@ class DyStockBackTestingStrategyResultDealsWidget(DyStockTableWidget):
         # 定制的表头右键Actions，防止重复创建
         self.__customHeaderContextMenuActions = set()
 
+    def _initItemMenu(self):
+        """
+            子类改写
+            这样子类可以定制Item的右键菜单
+        """
+        super()._initItemMenu()
+
+        self._itemMenu.addSeparator()
+
+        action = QAction('交易信号K线图: 无日期', self)
+        action.triggered.connect(self._showBuySellKLineWithoutDate)
+        self._itemMenu.addAction(action)
+
     def customizeHeaderContextMenu(self, headerItem):
         """
             子类改写
@@ -351,7 +364,7 @@ class DyStockBackTestingStrategyResultDealsWidget(DyStockTableWidget):
         """
         return '{0}_{1}'.format(self._strategyCls.chName, self._name)
 
-    def _itemDoubleClicked(self, item):
+    def _showBuySellKLine(self, item, withDate=True):
         # get code
         code, baseDate = self.getCodeDate(item)
         if code is None or baseDate is None:
@@ -371,4 +384,66 @@ class DyStockBackTestingStrategyResultDealsWidget(DyStockTableWidget):
                 date_ = time_[:len('2000-00-00')]
                 buySellDates[date_] = type_
 
-        self._dataViewer.plotBuySellDayCandleStick(code, buySellDates)
+        self._dataViewer.plotBuySellDayCandleStick(code, buySellDates, withDate)
+
+    def _showBuySellKLineWithoutDate(self):
+        item = self.itemAt(self._rightClickPoint)
+
+        self._showBuySellKLine(item, withDate=False)
+
+    def _itemDoubleClicked(self, item):
+        self._showBuySellKLine(item)
+
+    def __combineInitColNames(self, colNamesList):
+        """
+            @colNamesList: [colNames]
+        """
+        if not colNamesList:
+            return
+
+        # set headers
+        self.setColNames(colNamesList[0])
+
+        # reassign variables headers
+        buyCount = 0
+        sellCount = 0
+        pnl = 0
+        tradeCost = 0
+        for colNames in colNamesList:
+            # '交易类型'
+            colName = colNames[self._typeCol]
+            buyCountStart = colName.find('买入')
+            sellCountStart = colName.find('卖出')
+
+            buyCount += int(colName[buyCountStart + 3 : sellCountStart - 1])
+            sellCount += int(colName[sellCountStart + 3 : -1])
+
+            # '盈亏'
+            colName = colNames[self._pnlCol]
+            pnl += float(colName[3:-1])
+
+            # '交易成本'
+            colName = colNames[self._tradeCostCol]
+            tradeCost += float(colName[5:-1])
+
+        self.setColName(self._typeCol, '交易类型(买入:{},卖出:{})'.format(buyCount, sellCount))
+        self.setColName(self._pnlCol, '盈亏(%.2f)'%pnl)
+        self.setColName(self._tradeCostCol, '交易成本(%.2f)'%tradeCost)
+
+    def combineInit(self, selves):
+        """
+            use self widgets to initialize itself
+            @selves: [self object]
+        """
+        # get column names and rows
+        colNamesList = []
+        rows = []
+        for self_ in selves:
+            colNamesList.append(self_.getColNames())
+            rows.extend(self_.getAll())
+        
+        # show on widget
+        self.__combineInitColNames(colNamesList)
+        self.fastAppendRows(rows, self.getAutoForegroundColName())
+
+        self.setAllItemsForeground()

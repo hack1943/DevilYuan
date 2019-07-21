@@ -4,15 +4,17 @@ from Stock.Common.DyStockCommon import DyStockCommon
 try:
     from WindPy import *
 except ImportError:
-    print("DevilYuan-Warnning: Import WindPy error, switch default data source of stock history days to TuShare!")
-    DyStockCommon.WindPyInstalled = False
+    if DyStockCommon.WindPyInstalled:
+        print("DevilYuan-Warning: Import WindPy error, switch default data source of stock history days to TuShare!")
+        DyStockCommon.WindPyInstalled = False
 
 
 import os
 import importlib
 
+
 # dynamically load strategies from specific package, like 'Stock.Trade.Strategy'
-def __loadStrategies(dir, packageCommonPrefix, onlyDir=True):
+def __loadStrategies(dir, packageCommonPrefix, strategyClsMap, onlyDir=True):
     fields = []
     for root, dirs, files in os.walk(dir):
         for dirName in dirs:
@@ -23,7 +25,7 @@ def __loadStrategies(dir, packageCommonPrefix, onlyDir=True):
             fields.append(dirFields)
 
             dirFields.append(dirName)
-            retFields = __loadStrategies(os.path.sep.join([dir, dirName]), packageCommonPrefix, onlyDir=False)
+            retFields = __loadStrategies(os.path.sep.join([dir, dirName]), packageCommonPrefix, strategyClsMap, onlyDir=False)
             if retFields:
                 dirFields.append(retFields)
 
@@ -38,7 +40,10 @@ def __loadStrategies(dir, packageCommonPrefix, onlyDir=True):
 
                 module = importlib.import_module('{}.{}'.format(packagePrefix, file[:-3]))
 
-                strategyCls = module.__getattribute__(file[:-3])
+                strategyClsName = file[:-3]
+                strategyCls = module.__getattribute__(strategyClsName)
+
+                strategyClsMap[strategyClsName] = strategyCls
 
                 fields.append([strategyCls]) # strategy class
 
@@ -46,5 +51,8 @@ def __loadStrategies(dir, packageCommonPrefix, onlyDir=True):
 
     return fields
 
-def DynamicLoadStrategyFields(dir, packageCommonPrefix):
-    return __loadStrategies(dir, packageCommonPrefix, onlyDir=True)
+def DynamicLoadStrategyFields(dir, packageCommonPrefix, strategyClsMap):
+    """
+        @strategyClsMap: {strategy class name: strategy class}, out parameter
+    """
+    return __loadStrategies(dir, packageCommonPrefix, strategyClsMap, onlyDir=True)
